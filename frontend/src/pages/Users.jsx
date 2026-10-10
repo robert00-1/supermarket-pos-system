@@ -1,233 +1,200 @@
+
 import { useEffect, useState } from "react";
 import axios from "axios";
-
 import Sidebar from "../components/Sidebar";
 import Navbar from "../components/Navbar";
+
+const API = "http://localhost:5000/api/auth";
+
+const emptyForm = {
+  name: "",
+  email: "",
+  phone: "",
+  password: "",
+  role: "cashier",
+  status: "active",
+  shiftStart: "",
+  shiftEnd: "",
+  attendance: "absent",
+};
 
 export default function Users() {
   const [users, setUsers] = useState([]);
   const [showModal, setShowModal] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState({ ...emptyForm });
 
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    phone: "",
-    password: "",
-    role: "cashier",
-    status: "active",
+  const currentUser = JSON.parse(localStorage.getItem("user") || "null");
+  const isAdmin = currentUser?.role === "admin";
+  const token = localStorage.getItem("token");
 
-    shiftStart: "",
-    shiftEnd: "",
-    attendance: "present",
-  });
+  const authConfig = {
+    headers: { Authorization: `Bearer ${token}` },
+  };
 
-  /* =========================
-     FETCH USERS
-  ========================= */
   const fetchUsers = async () => {
     try {
-      const res = await axios.get(
-        "http://localhost:5000/api/auth/users"
+      setError("");
+      const response = await axios.get(`${API}/users`, authConfig);
+      setUsers(response.data);
+    } catch (err) {
+      console.error("FETCH USERS ERROR:", err);
+      setError(
+        err.response?.data?.message ||
+          "Unable to load workers. Please check your login."
       );
-
-      setUsers(res.data);
-
-    } catch (error) {
-      console.log(error);
     }
   };
 
   useEffect(() => {
-    fetchUsers();
+    if (isAdmin) fetchUsers();
   }, []);
 
-  /* =========================
-     HANDLE FORM
-  ========================= */
-  const handleChange = (e) => {
-    setForm({
-      ...form,
-      [e.target.name]: e.target.value,
-    });
+  const handleChange = (event) => {
+    setForm((previous) => ({
+      ...previous,
+      [event.target.name]: event.target.value,
+    }));
   };
 
-  /* =========================
-     ADD WORKER
-  ========================= */
-  const addWorker = async (e) => {
-    e.preventDefault();
+  const addWorker = async (event) => {
+    event.preventDefault();
+
+    if (!isAdmin) {
+      alert("Only administrators can add workers.");
+      return;
+    }
+
+    if (form.shiftStart && form.shiftEnd &&
+        form.shiftStart === form.shiftEnd) {
+      alert("Shift start and end times cannot be the same.");
+      return;
+    }
 
     try {
-      const token = localStorage.getItem("token");
+      setLoading(true);
 
-      await axios.post(
-        "http://localhost:5000/api/auth/register",
-        form,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+      await axios.post(`${API}/workers`, form, authConfig);
 
-      alert("Worker added successfully");
-
-      setForm({
-        name: "",
-        email: "",
-        phone: "",
-        password: "",
-        role: "cashier",
-        status: "active",
-
-        shiftStart: "",
-        shiftEnd: "",
-        attendance: "present",
-      });
-
+      alert("Worker added successfully.");
+      setForm({ ...emptyForm });
       setShowModal(false);
-
-      fetchUsers();
-
-    } catch (error) {
-      console.log(error);
-
-      alert(
-        error.response?.data?.message ||
-        "Error adding worker"
-      );
+      await fetchUsers();
+    } catch (err) {
+      console.error("ADD WORKER ERROR:", err);
+      alert(err.response?.data?.message || "Unable to add worker.");
+    } finally {
+      setLoading(false);
     }
   };
 
+  const deleteWorker = async (user) => {
+    if (!isAdmin) return;
+
+    if (user._id === currentUser?.id) {
+      alert("You cannot delete your own account.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${user.name}? This action cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await axios.delete(`${API}/user/${user._id}`, authConfig);
+      setUsers((previous) =>
+        previous.filter((worker) => worker._id !== user._id)
+      );
+      alert("Worker deleted successfully.");
+    } catch (err) {
+      console.error("DELETE WORKER ERROR:", err);
+      alert(err.response?.data?.message || "Unable to delete worker.");
+    }
+  };
+
+  if (!isAdmin) {
+    return (
+      <div className="flex min-h-screen bg-gray-100">
+        <Sidebar />
+        <div className="flex-1">
+          <Navbar />
+          <div className="p-6">
+            <h1 className="text-2xl font-bold">Workers & Cashiers</h1>
+            <p className="mt-4 text-red-600">
+              Only administrators can access worker management.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen bg-gray-100">
-
-      {/* SIDEBAR */}
       <Sidebar />
 
-      {/* MAIN */}
-      <div className="flex-1">
-
-        {/* NAVBAR */}
+      <div className="flex-1 min-w-0">
         <Navbar />
 
-        <div className="p-6">
-
-          {/* HEADER */}
-          <div className="flex justify-between items-center mb-6">
-
-            <h1 className="text-3xl font-bold">
-              Workers & Cashiers
-            </h1>
+        <main className="p-6">
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-3xl font-bold">Workers & Cashiers</h1>
+              <p className="mt-1 text-gray-600">
+                Manage staff, roles, shift times and attendance.
+              </p>
+            </div>
 
             <button
               onClick={() => setShowModal(true)}
-              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded"
+              className="rounded bg-green-600 px-4 py-2 text-white hover:bg-green-700"
             >
               + Add Worker
             </button>
-
           </div>
 
-          {/* TABLE */}
-          <div className="bg-white rounded-xl shadow overflow-x-auto">
+          {error && (
+            <p className="mb-4 rounded bg-red-100 p-3 text-red-700">
+              {error}
+            </p>
+          )}
 
+          <div className="overflow-x-auto rounded-xl bg-white shadow">
             <table className="w-full border-collapse">
-
-              {/* TABLE HEAD */}
               <thead className="bg-gray-200">
                 <tr>
-
-                  <th className="p-3 text-left">
-                    Name
-                  </th>
-
-                  <th className="p-3 text-left">
-                    Phone
-                  </th>
-
-                  <th className="p-3 text-left">
-                    Email
-                  </th>
-
-                  <th className="p-3 text-left">
-                    Role
-                  </th>
-
-                  <th className="p-3 text-left">
-                    Status
-                  </th>
-
-                  <th className="p-3 text-left">
-                    Shift Start
-                  </th>
-
-                  <th className="p-3 text-left">
-                    Shift End
-                  </th>
-
-                  <th className="p-3 text-left">
-                    Attendance
-                  </th>
-
+                  {[
+                    "Name",
+                    "Phone",
+                    "Email",
+                    "Role",
+                    "Status",
+                    "Shift Start",
+                    "Shift End",
+                    "Attendance",
+                    "Actions",
+                  ].map((heading) => (
+                    <th key={heading} className="p-3 text-left">
+                      {heading}
+                    </th>
+                  ))}
                 </tr>
               </thead>
 
-              {/* TABLE BODY */}
               <tbody>
-
                 {users.map((user) => (
+                  <tr key={user._id} className="border-b">
+                    <td className="p-3">{user.name}</td>
+                    <td className="p-3">{user.phone || "--"}</td>
+                    <td className="p-3">{user.email}</td>
+                    <td className="p-3 capitalize">{user.role}</td>
 
-                  <tr
-                    key={user._id}
-                    className="border-b"
-                  >
-
-                    {/* NAME */}
                     <td className="p-3">
-                      {user.name}
-                    </td>
-
-                    {/* PHONE */}
-                    <td className="p-3">
-                      {user.phone}
-                    </td>
-
-                    {/* EMAIL */}
-                    <td className="p-3">
-                      {user.email}
-                    </td>
-
-                    {/* ROLE */}
-                    <td className="p-3">
-
                       <span
-                        className={`px-3 py-1 rounded text-white text-sm capitalize
-                        ${
-                          user.role === "admin"
-                            ? "bg-red-600"
-                            : user.role === "manager"
-                            ? "bg-blue-600"
-                            : user.role === "security"
-                            ? "bg-gray-700"
-                            : user.role === "cleaner"
-                            ? "bg-yellow-600"
-                            : user.role === "loader"
-                            ? "bg-purple-600"
-                            : "bg-green-600"
-                        }`}
-                      >
-                        {user.role}
-                      </span>
-
-                    </td>
-
-                    {/* STATUS */}
-                    <td className="p-3">
-
-                      <span
-                        className={`px-3 py-1 rounded text-white text-sm
-                        ${
+                        className={`rounded px-2 py-1 text-sm text-white ${
                           user.status === "active"
                             ? "bg-green-600"
                             : "bg-red-600"
@@ -235,25 +202,14 @@ export default function Users() {
                       >
                         {user.status}
                       </span>
-
                     </td>
 
-                    {/* SHIFT START */}
-                    <td className="p-3">
-                      {user.shiftStart || "--"}
-                    </td>
+                    <td className="p-3">{user.shiftStart || "--"}</td>
+                    <td className="p-3">{user.shiftEnd || "--"}</td>
 
-                    {/* SHIFT END */}
                     <td className="p-3">
-                      {user.shiftEnd || "--"}
-                    </td>
-
-                    {/* ATTENDANCE */}
-                    <td className="p-3">
-
                       <span
-                        className={`px-3 py-1 rounded text-white text-sm
-                        ${
+                        className={`rounded px-2 py-1 text-sm text-white ${
                           user.attendance === "present"
                             ? "bg-green-600"
                             : user.attendance === "late"
@@ -263,204 +219,170 @@ export default function Users() {
                             : "bg-red-600"
                         }`}
                       >
-                        {user.attendance}
+                        {user.attendance || "absent"}
                       </span>
-
                     </td>
 
+                    <td className="p-3">
+                      {user._id !== currentUser?.id && (
+                        <button
+                          onClick={() => deleteWorker(user)}
+                          className="rounded bg-red-600 px-3 py-1 text-white hover:bg-red-700"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </td>
                   </tr>
-
                 ))}
 
+                {users.length === 0 && !error && (
+                  <tr>
+                    <td colSpan={9} className="p-6 text-center text-gray-500">
+                      No workers found.
+                    </td>
+                  </tr>
+                )}
               </tbody>
-
             </table>
-
           </div>
-
-        </div>
-
+        </main>
       </div>
 
-      {/* =========================
-          ADD WORKER MODAL
-      ========================= */}
       {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4">
+          <div className="my-4 w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
+            <h2 className="mb-4 text-2xl font-bold">Add Worker</h2>
 
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-
-          <div className="bg-white p-6 rounded-xl w-[400px] shadow-lg">
-
-            <h2 className="text-2xl font-bold mb-4">
-              Add Worker
-            </h2>
-
-            <form
-              onSubmit={addWorker}
-              className="space-y-3"
-            >
-
-              {/* NAME */}
+            <form onSubmit={addWorker} className="space-y-3">
               <input
-                type="text"
                 name="name"
                 placeholder="Full Name"
                 value={form.name}
                 onChange={handleChange}
-                className="border p-2 w-full rounded"
+                className="w-full rounded border p-2"
                 required
               />
 
-              {/* EMAIL */}
               <input
                 type="email"
                 name="email"
                 placeholder="Email"
                 value={form.email}
                 onChange={handleChange}
-                className="border p-2 w-full rounded"
+                className="w-full rounded border p-2"
                 required
               />
 
-              {/* PHONE */}
               <input
-                type="text"
                 name="phone"
                 placeholder="Phone Number"
                 value={form.phone}
                 onChange={handleChange}
-                className="border p-2 w-full rounded"
-              />
-
-              {/* PASSWORD */}
-              <input
-                type="password"
-                name="password"
-                placeholder="Password"
-                value={form.password}
-                onChange={handleChange}
-                className="border p-2 w-full rounded"
+                className="w-full rounded border p-2"
                 required
               />
 
-              {/* ROLE */}
+              <input
+                type="password"
+                name="password"
+                placeholder="Password (at least 8 characters)"
+                value={form.password}
+                onChange={handleChange}
+                minLength={8}
+                className="w-full rounded border p-2"
+                required
+              />
+
+              <label className="block text-sm font-medium">Role</label>
               <select
                 name="role"
                 value={form.role}
                 onChange={handleChange}
-                className="border p-2 w-full rounded"
+                className="w-full rounded border p-2"
               >
-                <option value="cashier">
-                  Cashier
-                </option>
-
-                <option value="manager">
-                  Manager
-                </option>
-
-                <option value="security">
-                  Security
-                </option>
-
-                <option value="cleaner">
-                  Cleaner
-                </option>
-
-                <option value="loader">
-                  Loader
-                </option>
-
-                <option value="assistant">
-                  Assistant
-                </option>
+                <option value="cashier">Cashier</option>
+                <option value="manager">Manager</option>
+                <option value="security">Security</option>
+                <option value="cleaner">Cleaner</option>
+                <option value="loader">Loader</option>
+                <option value="assistant">Assistant</option>
               </select>
 
-              {/* STATUS */}
+              <label className="block text-sm font-medium">Account Status</label>
               <select
                 name="status"
                 value={form.status}
                 onChange={handleChange}
-                className="border p-2 w-full rounded"
+                className="w-full rounded border p-2"
               >
-                <option value="active">
-                  Active
-                </option>
-
-                <option value="inactive">
-                  Inactive
-                </option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
               </select>
 
-              {/* SHIFT START */}
-              <input
-                type="time"
-                name="shiftStart"
-                value={form.shiftStart}
-                onChange={handleChange}
-                className="border p-2 w-full rounded"
-              />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium">Shift Start</label>
+                  <input
+                    type="time"
+                    name="shiftStart"
+                    value={form.shiftStart}
+                    onChange={handleChange}
+                    className="w-full rounded border p-2"
+                  />
+                </div>
 
-              {/* SHIFT END */}
-              <input
-                type="time"
-                name="shiftEnd"
-                value={form.shiftEnd}
-                onChange={handleChange}
-                className="border p-2 w-full rounded"
-              />
+                <div>
+                  <label className="block text-sm font-medium">Shift End</label>
+                  <input
+                    type="time"
+                    name="shiftEnd"
+                    value={form.shiftEnd}
+                    onChange={handleChange}
+                    className="w-full rounded border p-2"
+                  />
+                </div>
+              </div>
 
-              {/* ATTENDANCE */}
+              <label className="block text-sm font-medium">
+                Initial Attendance
+              </label>
               <select
                 name="attendance"
                 value={form.attendance}
                 onChange={handleChange}
-                className="border p-2 w-full rounded"
+                className="w-full rounded border p-2"
               >
-                <option value="present">
-                  Present
-                </option>
-
-                <option value="late">
-                  Late
-                </option>
-
-                <option value="absent">
-                  Absent
-                </option>
-
-                <option value="off">
-                  Off
-                </option>
+                <option value="absent">Absent</option>
+                <option value="present">Present</option>
+                <option value="late">Late</option>
+                <option value="off">Off</option>
               </select>
 
-              {/* BUTTONS */}
               <div className="flex gap-3 pt-2">
-
                 <button
                   type="submit"
-                  className="bg-green-600 hover:bg-green-700 text-white w-full p-2 rounded"
+                  disabled={loading}
+                  className="w-full rounded bg-green-600 p-2 text-white hover:bg-green-700 disabled:opacity-50"
                 >
-                  Save Worker
+                  {loading ? "Saving..." : "Save Worker"}
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => setShowModal(false)}
-                  className="bg-gray-500 hover:bg-gray-600 text-white w-full p-2 rounded"
+                  onClick={() => {
+                    setShowModal(false);
+                    setForm({ ...emptyForm });
+                  }}
+                  className="w-full rounded bg-gray-500 p-2 text-white hover:bg-gray-600"
                 >
                   Cancel
                 </button>
-
               </div>
-
             </form>
-
           </div>
-
         </div>
-
       )}
-
     </div>
   );
 }
