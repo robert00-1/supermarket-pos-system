@@ -1,5 +1,8 @@
+
 import { Routes, Route } from "react-router-dom";
 
+import Home from "./pages/Home";
+import Register from "./pages/Register";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Products from "./pages/Products";
@@ -12,7 +15,10 @@ import Ledger from "./pages/Ledger";
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Login />} />
+      <Route path="/" element={<Home />} />
+      <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
+
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/products" element={<Products />} />
       <Route path="/pos" element={<POS />} />

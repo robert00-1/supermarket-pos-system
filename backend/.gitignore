@@ -1,0 +1,5 @@
+
+# Keep environment secrets out of Git
+.env
+.env.*
+!.env.example

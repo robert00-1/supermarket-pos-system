@@ -7,3 +7,8 @@ backend/uploads/
 dist/
 build/
 .vite/
+
+# Keep environment secrets out of Git
+.env
+.env.*
+!.env.example

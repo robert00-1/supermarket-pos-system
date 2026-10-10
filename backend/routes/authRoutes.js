@@ -6,35 +6,59 @@ import User from "../models/User.js";
 const router = express.Router();
 
 /* =========================
+
+/* =========================
    REGISTER USER
 ========================= */
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, phone, password, role, status } = req.body;
+    const { name, email, phone, password, adminKey } = req.body;
 
     if (!name || !email || !password) {
-      return res.status(400).json({ message: "Missing required fields" });
+      return res.status(400).json({
+        message: "Name, email and password are required",
+      });
     }
 
-    const existingUser = await User.findOne({ email });
+    if (password.length < 8) {
+      return res.status(400).json({
+        message: "Password must be at least 8 characters",
+      });
+    }
+
+    const existingUser = await User.findOne({
+      email: email.trim().toLowerCase(),
+    });
 
     if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
+      return res.status(400).json({
+        message: "User already exists",
+      });
+    }
+
+    // Only someone with the admin key can register as admin.
+    if (
+      !process.env.ADMIN_REGISTRATION_KEY ||
+      adminKey !== process.env.ADMIN_REGISTRATION_KEY
+    ) {
+      return res.status(403).json({
+        message: "Invalid admin registration key",
+      });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await User.create({
-      name,
-      email,
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
       phone,
       password: hashedPassword,
-      role: role || "user",
-      status: status || "active",
+      role: "admin",
+      status: "active",
     });
 
-    res.status(201).json({
-      message: "User created successfully",
+    return res.status(201).json({
+      message: "Admin account created successfully",
       user: {
         id: user._id,
         name: user.name,
@@ -45,7 +69,11 @@ router.post("/register", async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error("REGISTRATION ERROR:", error);
+
+    return res.status(500).json({
+      message: "Registration failed",
+    });
   }
 });
 
