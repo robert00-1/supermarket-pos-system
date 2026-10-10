@@ -8,15 +8,17 @@ const router = express.Router();
 /* =========================
 
 /* =========================
-   REGISTER USER
+
+/* =========================
+   CONTROLLED DEMO REGISTRATION
 ========================= */
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, phone, password, adminKey } = req.body;
+    const { name, email, phone, password } = req.body;
 
-    if (!name || !email || !password) {
+    if (!name?.trim() || !email?.trim() || !phone?.trim() || !password) {
       return res.status(400).json({
-        message: "Name, email and password are required",
+        message: "Name, email, phone and password are required",
       });
     }
 
@@ -26,60 +28,52 @@ router.post("/register", async (req, res) => {
       });
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
+
     const existingUser = await User.findOne({
-      email: email.trim().toLowerCase(),
+      email: normalizedEmail,
     });
 
     if (existingUser) {
-      return res.status(400).json({
-        message: "User already exists",
-      });
-    }
-
-    // Only someone with the admin key can register as admin.
-    if (
-      !process.env.ADMIN_REGISTRATION_KEY ||
-      adminKey !== process.env.ADMIN_REGISTRATION_KEY
-    ) {
-      return res.status(403).json({
-        message: "Invalid admin registration key",
+      return res.status(409).json({
+        message: "An account with this email already exists",
       });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Public registration can NEVER choose its own role.
     const user = await User.create({
       name: name.trim(),
-      email: email.trim().toLowerCase(),
-      phone,
+      email: normalizedEmail,
+      phone: phone.trim(),
       password: hashedPassword,
-      role: "admin",
+      role: "cashier",
       status: "active",
     });
 
     return res.status(201).json({
-      message: "Admin account created successfully",
+      message: "Demo account created successfully. You can now log in.",
       user: {
         id: user._id,
         name: user.name,
         email: user.email,
-        phone: user.phone,
         role: user.role,
         status: user.status,
       },
     });
   } catch (error) {
-    console.error("REGISTRATION ERROR:", error);
+    console.error("REGISTRATION ERROR:", error.message);
 
     return res.status(500).json({
-      message: "Registration failed",
+      message: "Registration failed. Please try again.",
     });
   }
 });
 
 router.post("/login", async (req, res) => {
   try {
-    console.log("LOGIN BODY:", req.body);
+    
 
     const { email, password } = req.body;
 
@@ -89,9 +83,9 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: email.trim().toLowerCase(), });
 
-    console.log("FOUND USER:", user);
+    
 
     if (!user) {
       return res.status(400).json({
@@ -104,7 +98,7 @@ router.post("/login", async (req, res) => {
       user.password
     );
 
-    console.log("PASSWORD MATCH:", isMatch);
+    
 
     if (!isMatch) {
       return res.status(400).json({
@@ -112,7 +106,7 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    console.log("JWT SECRET:", process.env.JWT_SECRET);
+    
 
     const token = jwt.sign(
       {
@@ -138,10 +132,10 @@ router.post("/login", async (req, res) => {
     });
 
   } catch (error) {
-    console.log("LOGIN ERROR:", error);
+    console.log("LOGIN ERROR:", error.message);
 
     res.status(500).json({
-      message: error.message,
+      message: "Login failed Please try again"
     });
   }
 });

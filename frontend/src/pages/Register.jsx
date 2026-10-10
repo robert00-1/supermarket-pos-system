@@ -12,13 +12,12 @@ export default function Register() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
-  const [adminKey, setAdminKey] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleRegister = async (e) => {
     e.preventDefault();
 
-    if (!name.trim() || !email.trim() || !password || !adminKey) {
+    if (!name.trim() || !email.trim() || !phone.trim() || !password) {
       alert("Please fill in all required fields.");
       return;
     }
@@ -35,22 +34,23 @@ export default function Register() {
         `${API}/api/auth/register`,
         {
           name: name.trim(),
-          email: email.trim(),
-          phone,
+          email: email.trim().toLowerCase(),
+          phone: phone.trim(),
           password,
-          adminKey,
         }
       );
 
-      alert(response.data.message || "Registration successful!");
-
+      alert(response.data.message || "Demo account created successfully!");
       navigate("/login");
     } catch (error) {
-      console.error("REGISTRATION ERROR:", error);
+      console.error(
+        "REGISTRATION ERROR:",
+        error.response?.data || error.message
+      );
 
       alert(
         error.response?.data?.message ||
-          "Registration failed. Please check your connection and try again."
+          "Registration failed. Please try again."
       );
     } finally {
       setLoading(false);
@@ -68,11 +68,12 @@ export default function Register() {
         </Link>
 
         <h1 className="mt-6 text-2xl font-bold text-gray-900">
-          Register as Admin
+          Create Demo Account
         </h1>
 
         <p className="mb-6 mt-2 text-sm text-gray-600">
-          Create an administrator account for your supermarket.
+          Register to explore the SuperMart POS demonstration. Demo accounts
+          have limited permissions.
         </p>
 
         <form onSubmit={handleRegister} className="space-y-4">
@@ -108,7 +109,7 @@ export default function Register() {
 
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">
-              Phone number
+              Phone number *
             </label>
             <input
               className={inputClass}
@@ -117,6 +118,7 @@ export default function Register() {
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               autoComplete="tel"
+              required
             />
           </div>
 
@@ -136,27 +138,12 @@ export default function Register() {
             />
           </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Admin registration key *
-            </label>
-            <input
-              className={inputClass}
-              type="password"
-              placeholder="Enter your admin key"
-              value={adminKey}
-              onChange={(e) => setAdminKey(e.target.value)}
-              autoComplete="off"
-              required
-            />
-          </div>
-
           <button
             type="submit"
             disabled={loading}
             className="w-full rounded-lg bg-yellow-400 py-3 font-bold text-gray-950 transition hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {loading ? "Creating account..." : "Create Admin Account"}
+            {loading ? "Creating account..." : "Register for Demo"}
           </button>
         </form>
 
