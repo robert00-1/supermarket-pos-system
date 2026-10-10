@@ -1,7 +1,26 @@
+
 import { useEffect, useState } from "react";
 import axios from "axios";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
+
+const API = (
+  import.meta.env.VITE_API_URL || "http://localhost:5000"
+).replace(/\/$/, "");
+
+const getImageUrl = (image) => {
+  if (!image) return "/placeholder.png";
+
+  if (image.startsWith("http://") || image.startsWith("https://")) {
+    return image;
+  }
+
+  if (image.startsWith("/")) {
+    return `${API}${image}`;
+  }
+
+  return `${API}/uploads/${image}`;
+};
 
 export default function POS() {
   const [products, setProducts] = useState([]);
@@ -14,36 +33,69 @@ export default function POS() {
 
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentMessage, setPaymentMessage] = useState("");
+  const [productsLoading, setProductsLoading] = useState(true);
+  const [productsError, setProductsError] = useState("");
 
-  // cashier from login
-  const user = JSON.parse(localStorage.getItem("user"));
+  const user = (() => {
+    try {
+      return JSON.parse(localStorage.getItem("user") || "null");
+    } catch {
+      return null;
+    }
+  })();
 
-  /* =========================
-     LOAD PRODUCTS
-  ========================= */
+  // LOAD PRODUCTS
   useEffect(() => {
+    let cancelled = false;
+
     const fetchProducts = async () => {
+      setProductsLoading(true);
+      setProductsError("");
+
       try {
-        const res = await axios.get("http://localhost:5000/api/products");
-        setProducts(res.data);
+        const res = await axios.get(`${API}/api/products`);
+
+        if (!cancelled) {
+          const data = Array.isArray(res.data)
+            ? res.data
+            : res.data.products || [];
+
+          setProducts(data);
+        }
       } catch (error) {
-        console.log(error);
+        console.error("Failed to load products:", error);
+
+        if (!cancelled) {
+          setProductsError(
+            error.response
+              ? `Could not load products (HTTP ${error.response.status}).`
+              : "Could not connect to the backend. Check your API URL and internet connection."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setProductsLoading(false);
+        }
       }
     };
 
     fetchProducts();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  /* =========================
-     CART
-  ========================= */
+  // CART
   const addToCart = (product) => {
     setCart((prev) => {
-      const exists = prev.find((p) => p._id === product._id);
+      const exists = prev.find((item) => item._id === product._id);
 
       if (exists) {
-        return prev.map((p) =>
-          p._id === product._id ? { ...p, qty: p.qty + 1 } : p
+        return prev.map((item) =>
+          item._id === product._id
+            ? { ...item, qty: item.qty + 1 }
+            : item
         );
       }
 
@@ -52,96 +104,104 @@ export default function POS() {
   };
 
   const total = cart.reduce(
-    (sum, item) => sum + item.price * item.qty,
+    (sum, item) => sum + Number(item.price || 0) * item.qty,
     0
   );
 
-  /* =========================
-     CASH CHECKOUT
-  ========================= */
+  const formattedItems = () =>
+    cart.map((item) => ({
+      productId: item._id,
+      name: item.name,
+      quantity: item.qty,
+      price: Number(item.price),
+    }));
+
+  const createReceipt = () => ({
+    items: cart.map((item) => ({ ...item })),
+    total,
+    cashier: user?.name || "Unknown Cashier",
+    customerName,
+    customerPhone,
+    date: new Date().toLocaleString(),
+    store: {
+      name: "ROBERTO SUPERMARKET",
+      address: "ELDORET CBD",
+      phone: "+254 71234567",
+    },
+  });
+
+  // CASH CHECKOUT
   const handleCheckout = async () => {
+    if (cart.length === 0) {
+      alert("Cart is empty");
+      return;
+    }
+
     try {
-      if (cart.length === 0) return alert("Cart is empty");
-
-      const formattedItems = cart.map((item) => ({
-        productId: item._id,
-        name: item.name,
-        quantity: item.qty,
-        price: item.price,
-      }));
-
-      await axios.post("http://localhost:5000/api/sales/checkout", {
-        items: formattedItems,
+      await axios.post(`${API}/api/sales/checkout`, {
+        items: formattedItems(),
         paymentMethod: "cash",
         cashier: user?.name || "Unknown Cashier",
         customerName,
         customerPhone,
       });
 
-      setReceipt({
-        items: cart,
-        total,
-        cashier: user?.name || "Unknown Cashier",
-        customerName,
-        customerPhone,
-        date: new Date().toLocaleString(),
-        store: {
-          name: "ROBERTO SUPERMARKET",
-          address: "ELDORET CBD",
-          phone: "+254 71234567",
-        },
-      });
-
+      setReceipt(createReceipt());
       setCart([]);
       setCustomerName("");
       setCustomerPhone("");
-
     } catch (error) {
-      console.log(error);
-      alert(error.response?.data?.message || "Checkout failed");
+      console.error("Cash checkout failed:", error);
+      alert(
+        error.response?.data?.message ||
+          "Checkout failed. Please check the backend."
+      );
     }
   };
 
-  /* =========================
-     MPESA PAYMENT
-  ========================= */
+  // MPESA PAYMENT
   const handleMpesaPayment = async () => {
+    if (cart.length === 0) {
+      alert("Cart is empty");
+      return;
+    }
+
+    if (!customerPhone.trim()) {
+      alert("Enter the customer's M-Pesa phone number.");
+      return;
+    }
+
+    if (paymentLoading) return;
+
+    setPaymentLoading(true);
+    setPaymentMessage("Sending STK Push...");
+
     try {
-      if (cart.length === 0) return alert("Cart is empty");
-      if (!customerPhone) return alert("Enter phone");
-      if (paymentLoading) return;
-
-      setPaymentLoading(true);
-      setPaymentMessage("Sending STK Push...");
-
-      const formattedItems = cart.map((item) => ({
-        productId: item._id,
-        name: item.name,
-        quantity: item.qty,
-        price: item.price,
-      }));
-
-      const response = await axios.post(
-        "http://localhost:5000/api/mpesa/stkpush",
-        {
-          phone: customerPhone,
-          amount: total,
-          items: formattedItems,
-        }
-      );
+      const response = await axios.post(`${API}/api/mpesa/stkpush`, {
+        phone: customerPhone.trim(),
+        amount: total,
+        items: formattedItems(),
+      });
 
       const checkoutId = response.data.checkoutRequestId;
 
-      setPaymentMessage("STK sent. Enter PIN...");
+      if (!checkoutId) {
+        throw new Error(
+          response.data.message || "No checkout request ID was returned."
+        );
+      }
+
+      setPaymentMessage("STK sent. Enter your M-Pesa PIN.");
 
       let attempts = 0;
+      const maxAttempts = 15;
 
       const interval = setInterval(async () => {
-        try {
-          attempts++;
+        attempts += 1;
 
+        try {
           const res = await axios.get(
-            `http://localhost:5000/api/mpesa/status/${checkoutId}`
+            `${API}/api/mpesa/status/${encodeURIComponent(checkoutId)}`
           );
 
           if (res.data.status === "paid") {
@@ -149,83 +209,101 @@ export default function POS() {
             setPaymentLoading(false);
             setPaymentMessage("Payment successful!");
 
-            setReceipt({
-              items: cart,
-              total,
-              cashier: user?.name || "Unknown Cashier",
-              customerName,
-              customerPhone,
-              date: new Date().toLocaleString(),
-              store: {
-                name: "ROBERTO SUPERMARKET",
-                address: "ELDORET CBD",
-                phone: "+254 71234567",
-              },
-            });
-
+            setReceipt(createReceipt());
             setCart([]);
             setCustomerName("");
             setCustomerPhone("");
+            return;
           }
 
           if (res.data.status === "failed") {
             clearInterval(interval);
             setPaymentLoading(false);
-            setPaymentMessage("Payment failed");
+            setPaymentMessage("Payment failed. Please try again.");
+            return;
           }
 
-          if (attempts > 15) {
+          if (attempts >= maxAttempts) {
             clearInterval(interval);
             setPaymentLoading(false);
-            setPaymentMessage("Payment timeout");
+            setPaymentMessage(
+              "Payment status is still pending. Confirm payment before retrying."
+            );
           }
+        } catch (error) {
+          console.error("M-Pesa status check failed:", error);
 
-        } catch (err) {
-          console.log(err);
+          if (attempts >= maxAttempts) {
+            clearInterval(interval);
+            setPaymentLoading(false);
+            setPaymentMessage(
+              "Could not confirm payment status. Check the transaction before retrying."
+            );
+          }
         }
       }, 3000);
-
     } catch (error) {
-      console.log(error);
+      console.error("M-Pesa request failed:", error);
       setPaymentLoading(false);
-      setPaymentMessage("MPESA failed");
+      setPaymentMessage(
+        error.response?.data?.message ||
+          error.message ||
+          "M-Pesa request failed."
+      );
     }
   };
 
-  /* =========================
-     PDF
-  ========================= */
+  // DOWNLOAD RECEIPT PDF
   const downloadPDF = async () => {
     const element = document.getElementById("receipt-box");
-    const canvas = await html2canvas(element);
-    const data = canvas.toDataURL("image/png");
 
-    const pdf = new jsPDF("p", "mm", "a4");
-    pdf.addImage(data, "PNG", 10, 10, 180, 0);
-    pdf.save("receipt.pdf");
+    if (!element) {
+      alert("Complete a sale and open its receipt before downloading.");
+      return;
+    }
+
+    try {
+      const canvas = await html2canvas(element);
+      const data = canvas.toDataURL("image/png");
+      const pdf = new jsPDF("p", "mm", "a4");
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imageWidth = pageWidth - 20;
+      const imageHeight =
+        (canvas.height * imageWidth) / canvas.width;
+
+      const finalHeight = Math.min(imageHeight, pageHeight - 20);
+
+      pdf.addImage(data, "PNG", 10, 10, imageWidth, finalHeight);
+      pdf.save("receipt.pdf");
+    } catch (error) {
+      console.error("PDF download failed:", error);
+      alert("Could not create the receipt PDF.");
+    }
   };
 
-  /* =========================
-     UI
-  ========================= */
+  // UI
   return (
-    <div className="flex h-screen bg-gray-100">
-
-      {/* LEFT */}
-      <div className="w-1/4 bg-white p-4 border-r">
-        <h2 className="font-bold">Product Preview</h2>
+    <div className="flex h-screen flex-col overflow-auto bg-gray-100 lg:flex-row">
+      {/* LEFT: PRODUCT PREVIEW */}
+      <div className="w-full border-b bg-white p-4 lg:w-1/4 lg:border-b-0 lg:border-r">
+        <h2 className="mb-3 font-bold">Product Preview</h2>
 
         {selectedProduct ? (
           <div>
             <img
-              src={
-                selectedProduct.image
-                  ? `http://localhost:5000${selectedProduct.image}`
-                  : "/placeholder.png"
-              }
-              className="h-40 w-full object-cover"
+              src={getImageUrl(selectedProduct.image)}
+              alt={selectedProduct.name}
+              onError={(event) => {
+                event.currentTarget.onerror = null;
+                event.currentTarget.src = "/placeholder.png";
+              }}
+              className="h-40 w-full rounded object-cover"
             />
-            <p>{selectedProduct.name}</p>
+            <p className="mt-2 font-semibold">
+              {selectedProduct.name}
+            </p>
             <p>KES {selectedProduct.price}</p>
           </div>
         ) : (
@@ -233,201 +311,228 @@ export default function POS() {
         )}
       </div>
 
-      {/* CENTER */}
-      <div className="flex-1 p-4">
+      {/* CENTER: PRODUCTS */}
+      <div className="min-w-0 flex-1 p-4">
+        <h2 className="mb-4 text-xl font-bold">Products</h2>
+
         {/* CUSTOMER DETAILS */}
-<div className="flex gap-2 mb-4">
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row">
+          <input
+            type="text"
+            placeholder="Customer Name"
+            value={customerName}
+            onChange={(event) => setCustomerName(event.target.value)}
+            className="w-full rounded border p-2"
+          />
 
-  <input
-    type="text"
-    placeholder="Customer Name"
-    value={customerName}
-    onChange={(e) =>
-      setCustomerName(e.target.value)
-    }
-    className="border p-2 rounded w-full"
-  />
+          <input
+            type="tel"
+            placeholder="2547XXXXXXXX"
+            value={customerPhone}
+            onChange={(event) => setCustomerPhone(event.target.value)}
+            className="w-full rounded border p-2"
+          />
+        </div>
 
-  <input
-    type="text"
-    placeholder="2547XXXXXXXX"
-    value={customerPhone}
-    onChange={(e) =>
-      setCustomerPhone(e.target.value)
-    }
-    className="border p-2 rounded w-full"
-  />
+        {productsLoading && <p>Loading products...</p>}
 
-</div>
-        <div className="grid grid-cols-3 gap-3">
-          {products.map((p) => (
-            <div
-              key={p._id}
+        {productsError && (
+          <div className="mb-4 rounded bg-red-100 p-3 text-red-700">
+            {productsError}
+            <button
+              onClick={() => window.location.reload()}
+              className="ml-2 underline"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {!productsLoading &&
+          !productsError &&
+          products.length === 0 && (
+            <p className="rounded bg-yellow-100 p-3">
+              No products were returned by the backend.
+            </p>
+          )}
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+          {products.map((product) => (
+            <button
+              type="button"
+              key={product._id}
               onClick={() => {
-                setSelectedProduct(p);
-                addToCart(p);
+                setSelectedProduct(product);
+                addToCart(product);
               }}
-              className="bg-white p-2 shadow cursor-pointer"
+              className="rounded bg-white p-2 text-left shadow transition hover:shadow-md"
             >
               <img
-                src={
-                  p.image
-                    ? `http://localhost:5000${p.image}`
-                    : "/placeholder.png"
-                }
-                className="h-24 w-full object-cover"
+                src={getImageUrl(product.image)}
+                alt={product.name}
+                onError={(event) => {
+                  event.currentTarget.onerror = null;
+                  event.currentTarget.src = "/placeholder.png";
+                }}
+                className="h-24 w-full rounded object-cover"
               />
-              <p>{p.name}</p>
-              <p>KES {p.price}</p>
-            </div>
+
+              <p className="mt-2 font-semibold">{product.name}</p>
+              <p>KES {product.price}</p>
+            </button>
           ))}
         </div>
       </div>
 
-      {/* RIGHT */}
-      <div className="w-1/3 bg-white p-4 border-l">
-        <h2>Checkout</h2>
+      {/* RIGHT: CHECKOUT */}
+      <div className="w-full border-t bg-white p-4 lg:w-1/3 lg:border-l">
+        <h2 className="mb-4 text-lg font-bold">Checkout</h2>
 
-        {cart.map((item) => (
-          <div key={item._id} className="flex justify-between">
-            <span>{item.name} x {item.qty}</span>
-            <span>KES {item.price * item.qty}</span>
-          </div>
-        ))}
+        {cart.length === 0 ? (
+          <p className="text-gray-500">Your cart is empty.</p>
+        ) : (
+          cart.map((item) => (
+            <div
+              key={item._id}
+              className="flex justify-between gap-2 py-1"
+            >
+              <span>
+                {item.name} x {item.qty}
+              </span>
+              <span>
+                KES {Number(item.price) * item.qty}
+              </span>
+            </div>
+          ))
+        )}
 
-        <h3>Total: KES {total}</h3>
+        <h3 className="my-4 text-lg font-bold">
+          Total: KES {total.toLocaleString()}
+        </h3>
 
-        <button onClick={handleCheckout} className="bg-blue-600 text-white w-full p-2 mt-2">
+        <button
+          onClick={handleCheckout}
+          disabled={cart.length === 0 || paymentLoading}
+          className="mt-2 w-full rounded bg-blue-600 p-2 text-white disabled:opacity-50"
+        >
           Cash Checkout
         </button>
 
         <button
           onClick={handleMpesaPayment}
-          disabled={paymentLoading}
-          className="bg-green-600 text-white w-full p-2 mt-2"
+          disabled={paymentLoading || cart.length === 0}
+          className="mt-2 w-full rounded bg-green-600 p-2 text-white disabled:opacity-50"
         >
-          {paymentLoading ? "Processing..." : "Pay MPESA"}
+          {paymentLoading ? "Processing..." : "Pay M-Pesa"}
         </button>
 
         {paymentMessage && (
-          <p className="text-sm mt-2 bg-gray-100 p-2">{paymentMessage}</p>
+          <p className="mt-2 rounded bg-gray-100 p-2 text-sm">
+            {paymentMessage}
+          </p>
         )}
 
         <button
           onClick={downloadPDF}
-          className="bg-purple-600 text-white w-full p-2 mt-2"
+          disabled={!receipt}
+          className="mt-2 w-full rounded bg-purple-600 p-2 text-white disabled:opacity-50"
         >
           Download Receipt PDF
         </button>
       </div>
-            {/* RECEIPT */}
-      {receipt && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
 
+      {/* RECEIPT */}
+      {receipt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-auto bg-black/50 p-4">
           <div
             id="receipt-box"
-            className="bg-white w-[380px] p-4 rounded shadow-lg"
+            className="w-[380px] max-w-full rounded bg-white p-4 shadow-lg"
           >
-
-            {/* STORE */}
-            <div className="text-center mb-3">
-
-              <h2 className="font-bold text-xl">
+            <div className="mb-3 text-center">
+              <h2 className="text-xl font-bold">
                 {receipt.store.name}
               </h2>
-
               <p>{receipt.store.address}</p>
-
               <p>{receipt.store.phone}</p>
-
             </div>
 
             <hr className="my-2" />
 
-            {/* INFO */}
             <p>
-              <strong>Cashier:</strong>{" "}
-              {receipt.cashier}
+              <strong>Cashier:</strong> {receipt.cashier}
             </p>
-
             <p>
               <strong>Customer:</strong>{" "}
               {receipt.customerName || "Walk-in Customer"}
             </p>
-
             <p>
               <strong>Phone:</strong>{" "}
               {receipt.customerPhone || "--"}
             </p>
-
             <p>
-              <strong>Date:</strong>{" "}
-              {receipt.date}
+              <strong>Date:</strong> {receipt.date}
             </p>
 
             <hr className="my-2" />
 
-            {/* ITEMS */}
             {receipt.items.map((item, index) => (
               <div
-                key={index}
-                className="flex justify-between py-1"
+                key={`${item._id}-${index}`}
+                className="flex justify-between gap-2 py-1"
               >
                 <span>
                   {item.name} x {item.qty}
                 </span>
-
                 <span>
-                  KES {item.price * item.qty}
+                  KES {Number(item.price) * item.qty}
                 </span>
               </div>
             ))}
 
             <hr className="my-2" />
 
-            {/* TOTAL */}
-            <div className="flex justify-between font-bold text-lg">
+            <div className="flex justify-between text-lg font-bold">
               <span>Total</span>
-
-              <span>
-                KES {receipt.total}
-              </span>
+              <span>KES {receipt.total.toLocaleString()}</span>
             </div>
 
-            {/* BUTTONS */}
-            <div className="space-y-2 mt-4">
-
+            <div className="mt-4 space-y-2">
               <button
                 onClick={() => window.print()}
-                className="bg-green-600 hover:bg-green-700 text-white w-full p-2 rounded"
+                className="w-full rounded bg-green-600 p-2 text-white hover:bg-green-700"
               >
                 Print Receipt
               </button>
 
               <button
                 onClick={downloadPDF}
-                className="bg-purple-600 hover:bg-purple-700 text-white w-full p-2 rounded"
+                className="w-full rounded bg-purple-600 p-2 text-white hover:bg-purple-700"
               >
                 Download PDF
               </button>
 
               <button
+                onClick={() => setReceipt(null)}
+                className="w-full rounded bg-gray-600 p-2 text-white hover:bg-gray-700"
+              >
+                Close Receipt
+              </button>
+
+              <button
                 onClick={() => {
                   setReceipt(null);
+                  setSelectedProduct(null);
                   setCart([]);
+                  setPaymentMessage("");
                 }}
-                className="bg-gray-600 hover:bg-gray-700 text-white w-full p-2 rounded"
+                className="w-full rounded bg-blue-600 p-2 text-white hover:bg-blue-700"
               >
                 New Sale
               </button>
-
             </div>
-
           </div>
-
         </div>
       )}
-
     </div>
   );
 }

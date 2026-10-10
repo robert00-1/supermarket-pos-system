@@ -4,7 +4,7 @@ import axios from "axios";
 import Sidebar from "../components/Sidebar";
 import Navbar from "../components/Navbar";
 
-const API = "http://localhost:5000/api/auth";
+const API = `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/auth`;
 
 const emptyForm = {
   name: "",
