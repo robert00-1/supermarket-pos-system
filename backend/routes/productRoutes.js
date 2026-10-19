@@ -1,41 +1,78 @@
+
 import express from "express";
 import multer from "multer";
 import Product from "../models/Product.js";
-import fs from "fs";
-import path from "path";
+import cloudinary from "../config/cloudinary.js";
 
 const router = express.Router();
 
 /* =========================
-   MULTER STORAGE
+   MULTER MEMORY STORAGE
+   Images are uploaded to Cloudinary,
+   not saved to the local filesystem.
 ========================= */
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/");
-  },
+const storage = multer.memoryStorage();
 
-  filename: (req, file, cb) => {
-    cb(
-      null,
-      Date.now() + "-" + file.originalname
-    );
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5 MB
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+    ];
+
+    if (!allowedTypes.includes(file.mimetype)) {
+      return cb(
+        new Error("Only JPG, PNG, and WebP images are allowed.")
+      );
+    }
+
+    cb(null, true);
   },
 });
 
-const upload = multer({ storage });
+/* =========================
+   CLOUDINARY UPLOAD HELPER
+========================= */
+const uploadToCloudinary = (fileBuffer) => {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: "supermarket-pos/products",
+        resource_type: "image",
+      },
+      (error, result) => {
+        if (error) {
+          return reject(error);
+        }
+
+        resolve(result);
+      }
+    );
+
+    stream.end(fileBuffer);
+  });
+};
 
 /* =========================
    GET PRODUCTS
 ========================= */
 router.get("/", async (req, res) => {
   try {
-    const products = await Product.find();
+    const products = await Product.find().sort({
+      createdAt: -1,
+    });
 
     res.json(products);
-
   } catch (error) {
+    console.error("Fetch products error:", error.message);
+
     res.status(500).json({
-      message: error.message,
+      message: "Failed to fetch products.",
     });
   }
 });
@@ -43,55 +80,109 @@ router.get("/", async (req, res) => {
 /* =========================
    ADD PRODUCT
 ========================= */
-router.post(
-  "/",
-  upload.single("image"),
-  async (req, res) => {
-    try {
-      const product = await Product.create({
-        name: req.body.name,
-        barcode: req.body.barcode,
-        price: req.body.price,
-        stock: req.body.stock,
-        category: req.body.category,
-        description: req.body.description,
-        manufactureDate:
-          req.body.manufactureDate,
-        expiryDate: req.body.expiryDate,
-
-        image: req.file
-          ? `/uploads/${req.file.filename}`
-          : "",
-      });
-
-      res.status(201).json(product);
-
-    } catch (error) {
-      res.status(500).json({
+router.post("/", (req, res, next) => {
+  upload.single("image")(req, res, (error) => {
+    if (error) {
+      return res.status(400).json({
         message: error.message,
       });
     }
+
+    next();
+  });
+}, async (req, res) => {
+  let uploadedImage = null;
+
+  try {
+    const {
+      name,
+      barcode,
+      price,
+      stock,
+      category,
+      description,
+      manufactureDate,
+      expiryDate,
+    } = req.body;
+
+    if (!name || !barcode || price === undefined || price === "") {
+      return res.status(400).json({
+        message: "Name, barcode, and price are required.",
+      });
+    }
+
+    const productData = {
+      name,
+      barcode,
+      price: Number(price),
+      stock: stock === "" || stock === undefined ? 0 : Number(stock),
+      category: category || "General",
+      description: description || "",
+      manufactureDate: manufactureDate || "",
+      expiryDate: expiryDate || "",
+      image: "",
+    };
+
+    if (
+      !Number.isFinite(productData.price) ||
+      productData.price < 0 ||
+      !Number.isFinite(productData.stock) ||
+      productData.stock < 0
+    ) {
+      return res.status(400).json({
+        message: "Price and stock must be valid non-negative numbers.",
+      });
+    }
+
+    if (req.file) {
+      uploadedImage = await uploadToCloudinary(req.file.buffer);
+      productData.image = uploadedImage.secure_url;
+    }
+
+    const product = await Product.create(productData);
+
+    res.status(201).json(product);
+  } catch (error) {
+    // Remove the Cloudinary image if saving the product fails.
+    if (uploadedImage?.public_id) {
+      try {
+        await cloudinary.uploader.destroy(uploadedImage.public_id);
+      } catch (cleanupError) {
+        console.error(
+          "Cloudinary cleanup error:",
+          cleanupError.message
+        );
+      }
+    }
+
+    console.error("Add product error:", error.message);
+
+    if (error.code === 11000) {
+      return res.status(409).json({
+        message: "A product with this barcode already exists.",
+      });
+    }
+
+    res.status(500).json({
+      message: "Failed to add product.",
+    });
   }
-);
+});
 
 /* =========================
    RESTOCK PRODUCT
 ========================= */
 router.put("/restock/:id", async (req, res) => {
   try {
-    const { quantity } = req.body;
+    const quantity = Number(req.body.quantity);
 
-    // VALIDATE QUANTITY
-    if (!quantity || quantity <= 0) {
+    if (!Number.isFinite(quantity) || quantity <= 0) {
       return res.status(400).json({
         message: "Invalid quantity",
       });
     }
 
-    // FIND PRODUCT
-    const product = await Product.findById(
-      req.params.id
-    );
+    const product = await Product.findById(req.params.id);
 
     if (!product) {
       return res.status(404).json({
@@ -99,11 +190,8 @@ router.put("/restock/:id", async (req, res) => {
       });
     }
 
-    // ADD STOCK
-    product.stock =
-      Number(product.stock) + Number(quantity);
+    product.stock = Number(product.stock) + quantity;
 
-    // SAVE
     await product.save();
 
     res.json({
@@ -111,10 +199,11 @@ router.put("/restock/:id", async (req, res) => {
       message: "Product restocked successfully",
       product,
     });
-
   } catch (error) {
+    console.error("Restock error:", error.message);
+
     res.status(500).json({
-      message: error.message,
+      message: "Failed to restock product.",
     });
   }
 });
@@ -124,19 +213,25 @@ router.put("/restock/:id", async (req, res) => {
 ========================= */
 router.delete("/:id", async (req, res) => {
   try {
-    await Product.findByIdAndDelete(
-      req.params.id
-    );
+    const product = await Product.findByIdAndDelete(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({
+        message: "Product not found",
+      });
+    }
 
     res.json({
       message: "Deleted successfully",
     });
-
   } catch (error) {
+    console.error("Delete product error:", error.message);
+
     res.status(500).json({
-      message: error.message,
+      message: "Failed to delete product.",
     });
   }
 });
 
 export default router;
+
